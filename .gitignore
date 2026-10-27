@@ -1,0 +1,23 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+secrets.*
+*.pem
+*.key
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+
+# Local presenter notes (not published)
+workshop-slides-content.md

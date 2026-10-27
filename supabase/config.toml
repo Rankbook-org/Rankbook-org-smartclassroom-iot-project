@@ -1,0 +1,6 @@
+# Minimal Supabase CLI configuration.
+# If using the Supabase Dashboard, you can deploy the function there instead.
+project_id = "smart-classroom-iot"
+
+[functions.ingest-reading]
+verify_jwt = false

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Classroom IoT Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#657084; --line:#e4e8ef; --bg:#f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; color:var(--ink); background:var(--bg); }
+    header { padding:24px max(20px,calc((100% - 1100px)/2)); background:#14213d; color:white; }
+    header h1 { margin:0 0 6px; font-size:clamp(1.4rem,3vw,2rem); }
+    header p { margin:0; color:#dbe4f5; }
+    main { max-width:1100px; margin:24px auto; padding:0 16px 40px; }
+    .notice { background:#fff7df; border:1px solid #f1d98a; border-radius:10px; padding:12px 14px; margin-bottom:16px; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; margin-bottom:16px; }
+    .toolbar label { font-weight:650; }
+    .toolbar select { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:white; min-width:200px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 3px 12px #18284808; }
+    .label { color:var(--muted); font-size:.9rem; }
+    .value { font-size:clamp(1.8rem,4vw,2.5rem); font-weight:750; margin:8px 0; }
+    .unit { font-size:1rem; font-weight:500; color:var(--muted); }
+    .status { display:inline-block; border-radius:999px; padding:6px 12px; font-weight:700; background:#e4f8eb; color:#17683b; }
+    .status.warning { background:#ffe8e6; color:#a52b22; }
+    .status.small { font-size:.8rem; padding:3px 9px; }
+    .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; background:#b8c0cc; }
+    .dot.online { background:#22a559; }
+    .section { margin-top:16px; }
+    .section h2 { margin:0 0 12px; font-size:1.15rem; }
+    .chart-wrap { height:320px; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:.92rem; }
+    th,td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th { color:var(--muted); font-weight:650; }
+    tr.clickable { cursor:pointer; }
+    tr.clickable:hover { background:#f5f7fb; }
+    #message { color:var(--muted); font-size:.9rem; margin-top:14px; }
+    @media(max-width:900px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:560px) { .grid { grid-template-columns:1fr; } .chart-wrap { height:240px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Smart Classroom IoT Monitor</h1>
+    <p>Class dashboard · every pair's virtual ESP32 + DHT22 → Supabase</p>
+  </header>
+  <main>
+    <div class="notice" id="setup-notice" hidden>
+      <strong>Setup:</strong> Edit <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> in this file.
+      Use only the public/anon (publishable) key — never a service-role key.
+    </div>
+
+    <div class="toolbar">
+      <label for="device-select">Device</label>
+      <select id="device-select"><option value="">All devices</option></select>
+      <span class="label">Tip: open <code>?device=pair-07</code> to jump straight to your device.</span>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="label">Latest temperature</div>
+        <div class="value"><span id="temperature">--</span> <span class="unit">°C</span></div>
+        <div class="label" id="temperature-time">Waiting for data…</div>
+      </section>
+      <section class="card">
+        <div class="label">Latest humidity</div>
+        <div class="value"><span id="humidity">--</span> <span class="unit">%</span></div>
+        <div class="label" id="device">Device: --</div>
+      </section>
+      <section class="card">
+        <div class="label">Room status</div>
+        <div class="value"><span id="status" class="status">WAITING</span></div>
+        <div class="label">WARNING when temperature ≥ 30°C</div>
+      </section>
+      <section class="card">
+        <div class="label">Devices online</div>
+        <div class="value"><span id="online-count">--</span> <span class="unit">/ <span id="device-count">--</span></span></div>
+        <div class="label">Sent a reading in the last <span id="online-window"></span>s</div>
+      </section>
+    </div>
+
+    <section class="card section">
+      <h2>Temperature history</h2>
+      <div class="chart-wrap"><canvas id="temperatureChart"></canvas></div>
+    </section>
+
+    <section class="card section" id="overview-section">
+      <h2>Class overview — latest reading per device</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Device</th><th>Last seen</th><th>Temperature</th><th>Humidity</th><th>Status</th></tr></thead>
+          <tbody id="overview"><tr><td colspan="5">Waiting for data…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card section">
+      <h2>Recent readings</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Device</th><th>Temperature</th><th>Humidity</th><th>Status</th></tr></thead>
+          <tbody id="readings"><tr><td colspan="5">Waiting for data…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <p id="message">Not connected yet.</p>
+  </main>
+
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    // Replace with values from your dedicated workshop Supabase project.
+    // The publishable/anon key is designed to be public; the service-role key is NOT.
+    const SUPABASE_URL = "https://wyrppyxypkeddqlgwcdv.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_z0jkQapl1O56JY4BSwyORg_mgHP7Pgo";
+    const REFRESH_MS = 15000;
+    const HISTORY_ROWS = 600;     // enough for ~30 devices × 20 readings
+    const RECENT_ROWS = 20;
+    const ONLINE_WINDOW_MS = 60000;
+
+    const $ = (id) => document.getElementById(id);
+    const configured =
+      !SUPABASE_URL.includes("YOUR_SUPABASE") &&
+      !SUPABASE_ANON_KEY.includes("YOUR_SUPABASE");
+
+    let chart;
+    let client;
+    let rows = [];
+    let selectedDevice = new URLSearchParams(location.search).get("device") || "";
+
+    $("online-window").textContent = ONLINE_WINDOW_MS / 1000;
+
+    function showMessage(message) { $("message").textContent = message; }
+
+    function formatTime(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[char]);
+    }
+
+    // Stable, well-spread colour per device name.
+    function deviceColor(deviceId) {
+      let hash = 0;
+      for (const ch of deviceId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+      return `hsl(${(hash * 137.508) % 360} 65% 45%)`;
+    }
+
+    function statusPill(status, extraClass = "") {
+      const warning = status === "WARNING" ? " warning" : "";
+      return `<span class="status ${extraClass}${warning}">${escapeHtml(status)}</span>`;
+    }
+
+    function latestPerDevice(allRows) {
+      const latest = new Map();
+      for (const r of allRows) {
+        if (!latest.has(r.device_id)) latest.set(r.device_id, r);   // rows are newest-first
+      }
+      return [...latest.values()].sort((a, b) => a.device_id.localeCompare(b.device_id));
+    }
+
+    function updateDeviceSelect(devices) {
+      const select = $("device-select");
+      const ids = devices.map((d) => d.device_id);
+      if (selectedDevice && !ids.includes(selectedDevice)) ids.push(selectedDevice);
+      const current = [...select.options].slice(1).map((o) => o.value);
+      if (current.join("\n") !== ids.join("\n")) {
+        select.innerHTML = '<option value="">All devices</option>' +
+          ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join("");
+      }
+      select.value = selectedDevice;
+    }
+
+    function renderChart(visibleRows) {
+      const byDevice = new Map();
+      for (const r of [...visibleRows].reverse()) {
+        if (!byDevice.has(r.device_id)) byDevice.set(r.device_id, []);
+        byDevice.get(r.device_id).push({ x: new Date(r.created_at).getTime(), y: Number(r.temperature) });
+      }
+
+      const datasets = [...byDevice.entries()].map(([deviceId, points]) => ({
+        label: deviceId,
+        data: points,
+        borderColor: deviceColor(deviceId),
+        backgroundColor: deviceColor(deviceId),
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.25,
+      }));
+
+      if (!chart) {
+        chart = new Chart($("temperatureChart"), {
+          type: "line",
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            parsing: false,
+            scales: {
+              x: {
+                type: "linear",
+                ticks: { callback: (value) => new Date(value).toLocaleTimeString(), maxTicksLimit: 8 },
+              },
+              y: { title: { display: true, text: "°C" } },
+            },
+            plugins: {
+              tooltip: { callbacks: { title: (items) => new Date(items[0].parsed.x).toLocaleTimeString() } },
+            },
+          },
+        });
+      } else {
+        chart.data.datasets = datasets;
+      }
+      // A legend with 30 entries hides the chart; show it only for a handful of devices.
+      chart.options.plugins.legend = { display: datasets.length <= 10 };
+      chart.update();
+    }
+
+    function render() {
+      const devices = latestPerDevice(rows);
+      updateDeviceSelect(devices);
+
+      const now = Date.now();
+      const online = devices.filter((d) => now - new Date(d.created_at).getTime() < ONLINE_WINDOW_MS);
+      $("online-count").textContent = online.length;
+      $("device-count").textContent = devices.length;
+
+      $("overview").innerHTML = devices.length === 0
+        ? '<tr><td colspan="5">No devices yet.</td></tr>'
+        : devices.map((d) => {
+            const isOnline = now - new Date(d.created_at).getTime() < ONLINE_WINDOW_MS;
+            return `
+            <tr class="clickable" data-device="${escapeHtml(d.device_id)}">
+              <td><span class="dot${isOnline ? " online" : ""}"></span>${escapeHtml(d.device_id)}</td>
+              <td>${formatTime(d.created_at)}</td>
+              <td>${Number(d.temperature).toFixed(1)} °C</td>
+              <td>${Number(d.humidity).toFixed(1)}%</td>
+              <td>${statusPill(d.status, "small")}</td>
+            </tr>`;
+          }).join("");
+      $("overview-section").hidden = Boolean(selectedDevice);
+
+      const visible = selectedDevice ? rows.filter((r) => r.device_id === selectedDevice) : rows;
+
+      if (visible.length === 0) {
+        $("temperature").textContent = "--";
+        $("humidity").textContent = "--";
+        $("temperature-time").textContent = selectedDevice ? "No readings from this device yet." : "Waiting for data…";
+        $("device").textContent = `Device: ${selectedDevice || "--"}`;
+        $("status").textContent = "WAITING";
+        $("status").className = "status";
+        $("readings").innerHTML = '<tr><td colspan="5">No readings yet.</td></tr>';
+        renderChart([]);
+        return;
+      }
+
+      const latest = visible[0];
+      $("temperature").textContent = Number(latest.temperature).toFixed(1);
+      $("humidity").textContent = Number(latest.humidity).toFixed(1);
+      $("temperature-time").textContent = `Updated: ${formatTime(latest.created_at)}`;
+      $("device").textContent = `Device: ${latest.device_id}`;
+
+      const status = $("status");
+      status.textContent = latest.status;
+      status.className = `status${latest.status === "WARNING" ? " warning" : ""}`;
+
+      $("readings").innerHTML = visible.slice(0, RECENT_ROWS).map((r) => `
+        <tr>
+          <td>${formatTime(r.created_at)}</td>
+          <td>${escapeHtml(r.device_id)}</td>
+          <td>${Number(r.temperature).toFixed(1)} °C</td>
+          <td>${Number(r.humidity).toFixed(1)}%</td>
+          <td>${statusPill(r.status, "small")}</td>
+        </tr>`).join("");
+
+      renderChart(visible);
+    }
+
+    async function refresh() {
+      if (!client) return;
+      const { data, error } = await client
+        .from("sensor_readings")
+        .select("id, device_id, temperature, humidity, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(HISTORY_ROWS);
+
+      if (error) {
+        showMessage(`Could not load readings: ${error.message}`);
+        return;
+      }
+
+      rows = data || [];
+      render();
+      showMessage(rows.length === 0
+        ? "Connected to Supabase, but no readings have been saved yet."
+        : `Connected. Last refreshed at ${new Date().toLocaleTimeString()}. Refresh interval: ${REFRESH_MS / 1000}s.`);
+    }
+
+    function selectDevice(deviceId) {
+      selectedDevice = deviceId;
+      const url = new URL(location.href);
+      if (deviceId) url.searchParams.set("device", deviceId);
+      else url.searchParams.delete("device");
+      history.replaceState(null, "", url);
+      render();
+    }
+
+    $("device-select").addEventListener("change", (event) => selectDevice(event.target.value));
+    $("overview").addEventListener("click", (event) => {
+      const row = event.target.closest("tr[data-device]");
+      if (row) selectDevice(row.dataset.device);
+    });
+
+    if (!configured) {
+      $("setup-notice").hidden = false;
+      showMessage("Configuration required: edit SUPABASE_URL and SUPABASE_ANON_KEY in dashboard/index.html.");
+    } else {
+      client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      refresh();
+      setInterval(refresh, REFRESH_MS);
+    }
+  </script>
+</body>
+</html>
